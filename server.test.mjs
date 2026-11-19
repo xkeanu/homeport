@@ -1027,6 +1027,112 @@ const jsonServer = async (body) => {
 	return { srv, base: `http://127.0.0.1:${srv.address().port}` };
 };
 
+test('GET /api/apps lists local and peer apps with device, labels, URLs and health', async (t) => {
+	const live = createServer((req, res) => res.end());
+	await new Promise((resolve) => live.listen(0, '127.0.0.1', resolve));
+	t.after(() => live.close());
+	const peer = await jsonServer({
+		device: 'laptop',
+		apps: [{ hostname: 'web.shop.localhost', label: 'Web', project: 'shop', tailscaleUrl: 'https://laptop.example.ts.net:8443', up: true }],
+		credentials: 'never-forward-this',
+	});
+	t.after(() => peer.srv.close());
+	const dir = mkdtempSync(join(tmpdir(), 'homeport-agent-api-'));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	writeFileSync(process.env.PORTLESS_ACCESS, JSON.stringify({ owners: ['owner@example.test'] }));
+	const { port, close } = await bootFixture(dir, {
+		'routes.json': [
+			{ hostname: 'demo.localhost', port: live.address().port, pid: process.pid, tailscaleUrl: 'https://mac.example.ts.net:8443' },
+			{ hostname: 'api.shop.localhost', port: 1, pid: 0 },
+			{ hostname: 'gone.localhost', port: 1, pid: 4194305 },
+		],
+		'names.json': { 'demo.localhost': 'My Demo' },
+		'peers.json': { peers: [peer.base] },
+		'external-apps.json': { apps: [{ label: 'External', url: 'https://external.example.ts.net' }] },
+	});
+	t.after(close);
+	const response = await getPath(port, '/api/apps', 'GET', {
+		host: 'device.example.ts.net', 'x-forwarded-proto': 'https', 'tailscale-user-login': 'viewer@example.test',
+	});
+	assert.equal(response.status, 200);
+	assert.match(response.headers['content-type'], /^application\/json/);
+	assert.equal(response.headers['cache-control'], 'no-store');
+	const body = JSON.parse(response.data);
+	assert.equal(body.devices.length, 2);
+	assert.ok(body.devices[0].device.length > 0);
+	assert.deepEqual(body.devices[0].apps, [
+		{ hostname: 'demo.localhost', label: 'My Demo', tailscaleUrl: 'https://mac.example.ts.net:8443', up: true },
+		{ hostname: 'api.shop.localhost', label: 'api', project: 'shop', up: false },
+	]);
+	assert.deepEqual(body.devices[1], {
+		device: 'laptop',
+		apps: [{ hostname: 'web.shop.localhost', label: 'Web', project: 'shop', tailscaleUrl: 'https://laptop.example.ts.net:8443', up: true }],
+	});
+	assert.deepEqual(body.unavailablePeers, []);
+	assert.doesNotMatch(response.data, /never-forward-this|External|external\.example/);
+	assert.equal((await post(port, '/api/apps', {})).status, 405);
+	assert.equal((await getPath(port, '/api/apps', 'POST', {
+		host: 'device.example.ts.net', 'x-forwarded-proto': 'https', 'tailscale-user-login': 'viewer@example.test',
+	})).status, 403);
+});
+
+test('GET /api/apps reports failed peers and rereads routes, names and peers on each request', async (t) => {
+	const stalled = createServer((req, res) => {
+		res.writeHead(200, { 'Content-Type': 'application/json' });
+		res.write('{"apps":[');
+	});
+	await new Promise((resolve) => stalled.listen(0, '127.0.0.1', resolve));
+	t.after(() => { stalled.closeAllConnections(); stalled.close(); });
+	const stalledBase = `http://127.0.0.1:${stalled.address().port}`;
+	const invalid = await jsonServer({ message: 'not a snapshot' });
+	t.after(() => invalid.srv.close());
+	const dir = mkdtempSync(join(tmpdir(), 'homeport-agent-api-'));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	const { port, close } = await bootFixture(dir, {
+		'routes.json': [],
+		'peers.json': { peers: [stalledBase, invalid.base] },
+	});
+	t.after(close);
+	const response = await getPath(port, '/api/apps');
+	assert.equal(response.status, 200);
+	const body = JSON.parse(response.data);
+	assert.equal(body.devices.length, 1);
+	assert.deepEqual(body.devices[0].apps, []);
+	assert.deepEqual(body.unavailablePeers, [stalledBase, invalid.base]);
+	writeFileSync(join(dir, 'peers.json'), JSON.stringify({ peers: [] }));
+	writeFileSync(join(dir, 'routes.json'), JSON.stringify([{ hostname: 'new.localhost', port: 1, pid: 0 }]));
+	writeFileSync(join(dir, 'names.json'), JSON.stringify({ 'new.localhost': 'New label' }));
+	const updated = JSON.parse((await getPath(port, '/api/apps')).data);
+	assert.deepEqual(updated.unavailablePeers, []);
+	assert.deepEqual(updated.devices[0].apps, [{ hostname: 'new.localhost', label: 'New label', up: false }]);
+});
+
+test('GET /api/apps follows mutual peers only one hop and leaves /api/routes local-only', async (t) => {
+	const dirA = mkdtempSync(join(tmpdir(), 'homeport-agent-a-'));
+	const dirB = mkdtempSync(join(tmpdir(), 'homeport-agent-b-'));
+	t.after(() => { rmSync(dirA, { recursive: true, force: true }); rmSync(dirB, { recursive: true, force: true }); });
+	const a = await bootFixture(dirA, {
+		'routes.json': [{ hostname: 'a.localhost', port: 1, pid: 0 }],
+	});
+	t.after(a.close);
+	const b = await bootFixture(dirB, {
+		'routes.json': [{ hostname: 'b.localhost', port: 1, pid: 0 }],
+		'peers.json': { peers: [`http://127.0.0.1:${a.port}`] },
+	});
+	t.after(b.close);
+	writeFileSync(join(dirA, 'peers.json'), JSON.stringify({ peers: [`http://127.0.0.1:${b.port}`] }));
+	for (const [server, expected] of [[a, ['a.localhost', 'b.localhost']], [b, ['b.localhost', 'a.localhost']]]) {
+		const response = await fetch(`http://127.0.0.1:${server.port}/api/apps`, { signal: AbortSignal.timeout(5000) });
+		assert.equal(response.status, 200);
+		const body = await response.json();
+		assert.deepEqual(body.devices.map((device) => device.apps[0].hostname), expected);
+		assert.deepEqual(body.unavailablePeers, []);
+		assert.deepEqual(JSON.parse((await getPath(server.port, '/api/routes')).data).apps, [
+			{ hostname: expected[0], label: expected[0].split('.')[0], up: false },
+		]);
+	}
+});
+
 test('GET / merges configured peers under per-device headings; unreachable peers are skipped', async () => {
 	const live = createServer((req, res) => res.end());
 	await new Promise((resolve) => live.listen(0, '127.0.0.1', resolve));

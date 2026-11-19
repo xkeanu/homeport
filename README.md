@@ -554,6 +554,50 @@ For access across tailnets or outside Tailscale, see the
 entries by viewer: anyone with access can see the peer summaries the server
 fetches, even when they cannot open those apps themselves.
 
+## Agent access
+
+Agents can read this device and its configured peers with `GET /api/apps`:
+
+```sh
+curl --fail --silent --show-error http://127.0.0.1:5995/api/apps
+# From another tailnet device:
+curl --fail --silent --show-error 'https://<device>.<tailnet>.ts.net/api/apps'
+```
+
+```json
+{
+  "devices": [
+    { "device": "desktop", "apps": [
+      { "hostname": "web.localhost", "label": "Web", "tailscaleUrl": "https://desktop.example.ts.net:8443", "up": true }
+    ] },
+    { "device": "laptop", "apps": [
+      { "hostname": "api.shop.localhost", "label": "api", "project": "shop", "up": false }
+    ] }
+  ],
+  "unavailablePeers": ["https://offline.example.ts.net"]
+}
+```
+
+`devices` lists this machine first, then reachable peers in configuration
+order, including devices with no apps. Each app uses the `/api/routes`
+fields above; Compose services also have `project`. Identify an app by its
+device and hostname: the same hostname can run on multiple machines.
+An absent `tailscaleUrl` means the app is local-only; do not turn its
+`hostname` into a URL for a different device. `up` means the app answered
+its host's local HTTP probe, not that the caller has permission to open it.
+
+Each request rereads local configuration and fetches peers in parallel
+with the local health probes. Unreachable peers, invalid snapshots and
+responses past the 1.5s deadline appear in `unavailablePeers`, rather
+than as empty devices; a 200 response may therefore be partial. Responses
+are not cached. Peers are fetched only through their local-only
+`/api/routes`, so mutual peer configuration cannot recurse.
+
+The endpoint follows the page's read-access policy: viewers can read it,
+but it provides no start, stop or edit actions. It excludes account data,
+stopped launch entries and manually configured external links. This is a
+JSON API, not an MCP server; an agent can call it with its HTTP or shell tool.
+
 ## Owners and viewers
 
 Anyone who can open the directory can rename and reorder its apps until you
