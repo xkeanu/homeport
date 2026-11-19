@@ -1,7 +1,7 @@
 # Stable per-app names with Tailscale Services
 
 Research for [#45](https://github.com/xkeanu/homeport/issues/45), checked
-2026-11-19 against primary sources and Homeport `bf6b42e`.
+2026-11-20 against primary sources and Homeport `bf6b42e`.
 **Live test: blocked.** No disposable tailnet or hosts were supplied. The local
 Tailscale CLI failed at `tailscale version`: “Failed to load preferences.”
 No policy, identity or Service configuration was changed.
@@ -14,13 +14,22 @@ opt-in after the disposable-tailnet test. Homeport should consume the resulting
 Service allowance have different lifecycles. This is a proposal; #45 requires
 owner approval before product code.
 
-The strongest case for building it here is a convenient stable-name toggle.
-The cost is a second owner for startup, shutdown, recovery and names. Portless
-already has [open PR #309](https://github.com/vercel-labs/portless/pull/309) for
-Service sharing, explicit names, approval status and cleanup metadata. Its
-author's manual-testing claim is supplied evidence, not our verification.
-**Would change my mind:** upstream rejects lifecycle ownership, and a tested
-Homeport design avoids competing with Portless.
+Portless already starts and stops the app and records its tailnet share. Keeping
+the Service configuration there gives one process responsibility for startup,
+shutdown and recovery. [Upstream sharing code](https://github.com/vercel-labs/portless/blob/6784e585a786a23b557d1291dfc86647587c4ea6/packages/portless/src/tailscale.ts)
+
+Portless PR #309 proposes Service sharing, explicit names, approval status and
+cleanup metadata. Its head is `15460a1` and its last visible activity was May
+21, 2026. It remains open and unreviewed, with no visible maintainer response.
+The author reports manual testing. Our disposable-tailnet test is still pending.
+[Portless PR #309](https://github.com/vercel-labs/portless/pull/309)
+
+Reassess on December 18, 2026 if Portless maintainers still have no plan for
+Service support, or sooner if they decline it. At that point, evaluate manual
+Service setup for long-running apps and list their URLs under Other apps.
+A Homeport feature would need a test showing it can clean up and recover its
+own registrations without interfering with Portless.
+[Other apps links](../README.md#apps-started-outside-portless)
 
 ## Answers to the ticket
 
@@ -32,9 +41,9 @@ Homeport design avoids competing with Portless.
    [GA announcement](https://tailscale.com/blog/services-ga)
 2. **Admin setup.** Define each Service in the console/API; approve its hosts
    or configure `autoApprovers.services`; grant client access separately.
-   Hosts require tags and Tailscale ≥1.86.0; user-authenticated hosts are
-   ineligible. Pre-authorized tagged hosts can advertise without fresh admin
-   approval. [Setup and approval](https://tailscale.com/docs/features/tailscale-services#get-started)
+   Hosts require tags and Tailscale ≥1.86.0. Hosts matched by an
+   `autoApprovers.services` rule are approved automatically.
+   [Setup and approval](https://tailscale.com/docs/features/tailscale-services#get-started)
    API automation uses authenticated, scoped credentials; the exact Services
    scope was not verified. **Recommendation:** keep admin credentials out of
    Homeport. A non-admin can operate an authorized host, but cannot provision
@@ -94,24 +103,27 @@ receipt. Use an explicitly authorized disposable tailnet, tagged test hosts A
 and B, an allowed client and a denied client. Never re-tag a working machine.
 Record OS, Tailscale variant/version on every device, Portless version/commit
 and Homeport SHA. Keep policy backups and redacted results outside disposable
-state. Retain no keys or tokens.
+state. Enable MagicDNS and HTTPS certificates in the disposable tailnet.
+Retain no keys or tokens.
 
 1. Inventory Services and Serve configuration. Allocate a unique run-owned
    name, e.g. `hp45-<run>`, and unused loopback backend ports. Record ownership
    before creation. An admin defines `tcp:443`, the host tag and its owners,
-   approves A and grants only the allowed client access. Validate policy
-   allow/deny tests first; avoid an inherited allow-all rule. Exercise
-   auto-approval separately with a narrowly scoped test-host rule.
+   and grants only the allowed client access. Validate allow and deny policy
+   tests first. An inherited allow-all rule invalidates the denied-client test.
 2. Start a synthetic backend returning marker A. Register
    `tailscale serve --service=svc:<name> --https=443 127.0.0.1:<port>`.
-   From both clients record approval, DNS, TLS and HTTP results using bounded
-   requests (`curl --max-time 10`). Allowed must receive A; denied must not.
-   A zero CLI exit alone is not a successful connection.
+   Record the pending state and have an admin approve A. From both clients
+   record DNS, TLS and HTTP results using `curl --max-time 10`. The allowed
+   client must receive A and the denied client must fail. Separately, try a
+   fresh advertisement with a narrowly scoped auto-approval rule and verify
+   that the admin console marks it approved without manual action.
 3. Stop the backend; record failure behavior and retained advertisements.
    Drain (`tailscale serve drain svc:<name>`), wait for test connections to
    finish, then clear (`tailscale serve clear svc:<name>`). Restart on another
-   backend port and register again. Require the same URL and correct marker.
-   Test host/client restart too.
+   backend port and register again. Record whether approval is required again
+   before confirming the same URL and correct marker. Test host and client
+   restarts too.
 4. Advertise marker B on B under the same Service, approve it and record the
    routing mode. Drain A, then verify new requests reach B. Also test abrupt
    A outage. Record convergence time; repeated requests alone do not prove
@@ -133,7 +145,7 @@ state. Retain no keys or tokens.
 | Obligation | Result | Evidence required |
 | --- | --- | --- |
 | Setup, approval and allow/deny | BLOCKED | Versions, redacted policy tests, responses |
-| Stable URL after restarts | BLOCKED | Same URL, new port, correct marker |
+| Stable URL after restarts | BLOCKED | Same URL, new port, correct marker, approval status |
 | Two-host routing and outage | BLOCKED | Mode, markers, convergence time |
 | Owner/viewer and peer compatibility | BLOCKED | Allow/403 results, stable links |
 | Upstream lifecycle and cleanup | BLOCKED | Candidate SHA, crash results, inventory |
@@ -143,6 +155,5 @@ Revoke test access and remove only established run-owned resources. Preserve
 baseline resources and report cleanup failures. Failed obligations block
 implementation acceptance; missing evidence remains unknown.
 
-**#45 remains open** until the disposable-tailnet test is executed and the
-owner records the design decision. This document authorizes no product code
-or tailnet changes.
+**#45 remains open** pending the disposable-tailnet test. Product code also
+requires approval of the design from the owner.
