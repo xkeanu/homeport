@@ -211,6 +211,17 @@ const api = async (res) => {
 	serve(res, 'application/json', JSON.stringify(snapshot(hostname(), routes, up, names)));
 };
 
+// Aggregate for agents; peer fetches still use local-only /api/routes.
+const apiApps = async (res) => {
+	const bases = readPeers(PEERS);
+	const [{ routes, up, names }, ...peers] = await Promise.all([localApps(), ...bases.map((base) => fetchPeer(base))]);
+	res.setHeader('Cache-Control', 'no-store');
+	serve(res, 'application/json', JSON.stringify({
+		devices: [snapshot(hostname(), routes, up, names), ...peers.filter(Boolean)],
+		unavailablePeers: bases.filter((base, i) => !peers[i]).map((base) => new URL(base).origin),
+	}));
+};
+
 // Text twin of the cards in xbar/SwiftBar plugin format, for menubar/ (see menubar.mjs).
 const menu = async (res) => {
 	const { routes, up, names } = await localApps();
@@ -238,6 +249,7 @@ export const handler = async (req, res) => {
 	if (req.method === 'POST' && req.url === '/rename') return rename(req, res);
 	if (req.method === 'POST' && req.url === '/layout') return layout(req, res);
 	if (req.url === '/api/routes') return req.method === 'GET' ? api(res) : fail(res, 405);
+	if (req.url === '/api/apps') return req.method === 'GET' ? apiApps(res) : fail(res, 405);
 	if (req.url === '/api/menubar') return req.method === 'GET' ? menu(res) : fail(res, 405);
 	if (req.url === '/events') return req.method === 'GET' ? live(res) || fail(res, 503) : fail(res, 405);
 	if (req.url === '/manifest.webmanifest') return serve(res, 'application/manifest+json', MANIFEST);
