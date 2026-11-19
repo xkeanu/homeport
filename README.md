@@ -587,11 +587,13 @@ An absent `tailscaleUrl` means the app is local-only; do not turn its
 its host's local HTTP probe, not that the caller has permission to open it.
 
 Each request rereads local configuration and fetches peers in parallel
-with the local health probes. Unreachable peers, invalid snapshots and
-responses past the 1.5s deadline appear in `unavailablePeers`, rather
-than as empty devices; a 200 response may therefore be partial. Responses
-are not cached. Peers are fetched only through their local-only
-`/api/routes`, so mutual peer configuration cannot recurse.
+with the local health probes. Any peer that fails to return a valid snapshot
+within 1.5s appears in `unavailablePeers` as its origin (scheme, host and
+port), without configured credentials, paths, queries or fragments. This
+includes non-2xx responses, refused redirects and bodies over 256 KB.
+Failed peers are not listed as empty devices; a 200 response may therefore
+be partial. Responses are not cached. Peers are fetched only through their
+local-only `/api/routes`, so mutual peer configuration cannot recurse.
 
 The endpoint follows the page's read-access policy: viewers can read it,
 but it provides no start, stop or edit actions. It excludes account data,

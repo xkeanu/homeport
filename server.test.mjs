@@ -1076,6 +1076,24 @@ test('GET /api/apps lists local and peer apps with device, labels, URLs and heal
 	})).status, 403);
 });
 
+test('GET /api/apps reports unavailable origins without configured credentials or URL secrets', async (t) => {
+	const invalid = await jsonServer({ message: 'not a snapshot' });
+	t.after(() => invalid.srv.close());
+	const dir = mkdtempSync(join(tmpdir(), 'homeport-agent-api-'));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	const { port, close } = await bootFixture(dir, {
+		'peers.json': { peers: [
+			'https://user:password@peer.example.test/private?token=secret#fragment',
+			`${invalid.base}/private?token=secret#fragment`,
+		] },
+	});
+	t.after(close);
+	const response = await getPath(port, '/api/apps');
+	assert.equal(response.status, 200);
+	assert.deepEqual(JSON.parse(response.data).unavailablePeers, ['https://peer.example.test', invalid.base]);
+	assert.doesNotMatch(response.data, /user|password|private|token|secret|fragment/);
+});
+
 test('GET /api/apps reports failed peers and rereads routes, names and peers on each request', async (t) => {
 	const stalled = createServer((req, res) => {
 		res.writeHead(200, { 'Content-Type': 'application/json' });

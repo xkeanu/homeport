@@ -218,7 +218,7 @@ const apiApps = async (res) => {
 	res.setHeader('Cache-Control', 'no-store');
 	serve(res, 'application/json', JSON.stringify({
 		devices: [snapshot(hostname(), routes, up, names), ...peers.filter(Boolean)],
-		unavailablePeers: bases.filter((base, i) => !peers[i]),
+		unavailablePeers: bases.filter((base, i) => !peers[i]).map((base) => new URL(base).origin),
 	}));
 };
 
