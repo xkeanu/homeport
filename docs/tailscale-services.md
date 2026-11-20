@@ -2,9 +2,15 @@
 
 Research for [#45](https://github.com/xkeanu/homeport/issues/45), checked
 2026-11-20 against primary sources and Homeport `bf6b42e`.
-**Live test: blocked.** No disposable tailnet or hosts were supplied. The local
-Tailscale CLI failed at `tailscale version`: “Failed to load preferences.”
-No policy, identity or Service configuration was changed.
+
+**Disposable-tailnet test blocked.** A separate tailnet with user identities
+and tagged test hosts is still needed.
+
+On the standalone macOS client (Tailscale 1.104.7), a signed-in, untagged
+device rejected a named Service registration with `service hosts must be tagged
+nodes` (exit 1). The Serve configuration hash matched before and after the
+probe.
+[Tailscale Service host requirements](https://tailscale.com/docs/features/tailscale-services#step-2-configure-a-service-host)
 
 ## Recommendation
 
