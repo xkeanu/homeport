@@ -12,6 +12,15 @@ nodes` (exit 1). The Serve configuration hash matched before and after the
 probe.
 [Tailscale Service host requirements](https://tailscale.com/docs/features/tailscale-services#step-2-configure-a-service-host)
 
+In a separate smoke test on an existing tailnet, a tagged Linux Docker host
+running Tailscale 1.104.7 advertised the HTTPS Service. The operator saw
+**Connected** in the console. Both macOS clients (standalone and Tailmux 1.8.0)
+resolved the device name, while the Service name returned `NXDOMAIN`. The host
+did not receive a Service address. The probe ended before a Service-specific
+viewer grant could be tested. The host advertisement was drained and cleared,
+and the Docker fixture was removed. HTTPS and backend port changes remain
+unverified.
+
 ## Recommendation
 
 Keep Service creation and lifecycle in **Portless**, with explicit per-app
